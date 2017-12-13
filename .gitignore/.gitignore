@@ -1,0 +1,93 @@
+const url        = require('url');
+const express    = require('express');
+const bodyParser = require('body-parser');
+const nem        = require("nem-sdk").default;
+
+const FAUCET_ADDRESS = "NCQN6FPL7W7SQIP7K5JNNS6XV2LFOR7JW35XPPJZ";
+const FAUCET_PRIKEY = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+var app = express();
+app.use(bodyParser.urlencoded({extended: false}));
+app.use(bodyParser.json());
+app.use(function(req, res, next){
+    res.header("Access-Control-Allow-Origin","*");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+    next();
+})
+app.listen(1337);
+
+var NODES = Array(
+"http://alice2.nem.ninja",
+"http://alice3.nem.ninja",
+"http://alice4.nem.ninja",
+"http://alice5.nem.ninja",
+"http://alice6.nem.ninja",
+"http://alice7.nem.ninja"
+);
+
+var faucet_amount = 0;
+var address_expire = {};
+var address_win = {};
+
+function getEndpoint(){
+
+    var node_url = NODES[Math.floor(Math.random() * NODES.length)];
+    return node_url;
+}
+
+setInterval(() => {
+
+    var endpoint = nem.model.objects.create("endpoint")(getEndpoint(), nem.model.nodes.defaultPort);
+    nem.com.requests.account.data(endpoint, FAUCET_ADDRESS).then(function(res) {
+        faucet_amount = Math.floor(res.account.balance / 1000000);
+    });
+
+    for (var key in address_expire) {
+        if(address_expire[key] < Date.now()){
+            delete address_expire[key];
+        }
+    }
+
+}, 15000);
+
+app.get('/info', (req, res) => {
+
+    var q = url.parse(req.url,true).query;
+
+    res.writeHead(200, {'Content-Type': 'application/json; charset=utf-8'});
+    if(address_win[q.address]){
+        res.write('{"status":"win","amount":' + address_win[q.address] + '}');
+        delete address_win[q.address];
+
+    }else{
+        res.write('{"status":"lose"}');
+    }
+    res.end();
+});
+
+app.get('/slot', (req, res,next) => {
+
+    var q = url.parse(req.url,true).query;
+    if(q.address  in address_expire){
+
+        address_expire[q.address] += 60 * 1000;
+        return;
+    }else{
+        address_expire[q.address] = Date.now() + 60 * 1000;
+    }
+
+    if(Math.random() < 0.5 && faucet_amount > 10){
+
+        let transferTx = nem.model.objects.create("transferTransaction")(q.address, 5, "Qiita Faucet");
+        let common     = nem.model.objects.create("common")("", FAUCET_PRIKEY);
+        let transactionEntity = nem.model.transactions.prepare("transferTransaction")(common, transferTx, nem.model.network.data.mainnet.id);
+        nem.model.transactions.send(common, transactionEntity, endpoint)
+            .then(function(res){
+                address_win[q.address] = 5;
+            });
+    }
+
+    res.writeHead(200, {'Content-Type': 'text/plain; charset=utf-8'});
+    res.write("ok");
+    res.end();
+});
